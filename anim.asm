@@ -5,8 +5,9 @@
 ; and width.
 
 ; Shape table (man and woman)
-org 5FF4
-data 081C3E2A5D081C5D14142222
+org 5FF2
+.shape_table
+data 060E081C3E2A5D081C5D14142222
 
 org 6000
 
@@ -17,7 +18,7 @@ label page1     C054
 label mixoff    C052
 label target    2000
 label num_lines C0
-label num_rows  FF
+label num_cols  FF
 
 ldaa   .graphics
 ldaa   .hires
@@ -80,9 +81,7 @@ bne   .div7_table_fill_loop
 
 ; -------------------- Set shape and draw constants --------------------
 label shape_addr_h 5F
-label shape_addr_l F4
-label height 06
-label width  0E
+label shape_addr_l F2
 label xcoord 50
 label ycoord 00
 label delay  FF
@@ -97,17 +96,15 @@ ldai  .xcoord
 staz  .shape_coords
 ldai  .ycoord
 staz  .shape_coords 1
-ldxi  .height
-ldyi  .width
 ; -------------------- End set shape and draw constants --------------------
 
 
 ; -------------------- Main loop --------------------
 ; Compute number of iterations to move shape to end of screen
-ldai  .num_rows
+ldai  .num_cols
 sec
 sbci  .ycoord
-sbci  .width
+sbca  .shape_table 1
 
 ; Main loop. Move shape.
 .main_loop_start
@@ -132,8 +129,8 @@ jmpa .finished
 ; Subroutine to draw a shape described by a shape table
 ; Input: Zero-page shape table address (not table itself) in "shape_table_addr"
 ;        Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
-;        height of table in X
-;        width of table in Y
+;        (pixel coordinates for horizontal, which are converted to byte
+;         coordinates internally as needed)
 ; All registers and zbytes are restored.
 zbyte shape_table_addr 2
 zbyte shape_coords     2
@@ -153,38 +150,46 @@ ldaz  .shape_coords
 pha
 
 ; Set shape table address in load instruction.
-ldaz  .shape_table_addr
-staa  .shape_table_load_instr 1
+; Warning: We only increment address low byte by two to get to raw shape data.
+; This will not work across a page boundary nor when we add more header data.
+; TODO: Create a more robust solution for this problem.
+ldxz  .shape_table_addr
+inx
+inx
+stxa  .shape_table_load_instr 1
 ldaz  .shape_table_addr 1
 staa  .shape_table_load_instr 2
 
-; Set maximum X (in .shape_coords)
+; Set X and maximum X (in .shape_coords)
+ldai  00
+tay
+ldxz  .shape_coords
 txa
 clc
-adcz  .shape_coords
+adcny .shape_table_addr
 staz  .shape_coords
 
-; Set Y
-tya
-ldxz  .shape_coords 1
-ldyax .div7_table_addr
+; Save starting coordinate (in bytes) for Y
+ldyz  .shape_coords 1
+ldaay .div7_table_addr
 
-; Save starting y coordinate (not needed for x coordinate)
 zbyte y_start
-styz  .y_start
+staz  .y_start
 
-; Set maximum Y (in .shape_coords+1)
+; Set maximum Y (in .shape_coords + 1 in bytes)
+ldai  01
+tay
+ldaz  .shape_coords 1
 clc
-adcz  .shape_coords 1
-tax
-ldaax .div7_table_addr
+adcny .shape_table_addr
+tay
+ldaay .div7_table_addr
 staz  .shape_coords 1
 
-; Set X (must use original .shape_coords, which is on stack)
-pla
-tax
-pha
+; Finally, set Y
+ldyz  .y_start
 
+; Now we can start drawing
 .draw_shape_loop_start
 jsra  .line_index_to_address
 
