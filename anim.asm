@@ -7,7 +7,7 @@
 ; Shape table (man and woman)
 org 5FF2
 .shape_table
-data 060E081C3E2A5D081C5D14142222
+data 0602081C3E2A5D081C5D14142222
 
 org 6000
 
@@ -101,10 +101,21 @@ staz  .shape_coords 1
 
 ; -------------------- Main loop --------------------
 ; Compute number of iterations to move shape to end of screen
-ldai  .num_cols
+
+; Compute negative of width in number of pixels
+ldaa  .shape_table 1
+asl
+asl
+asl
+eori  FF
+clc
+adci  01
+
+; Combine with total number of columns and coordinate
+clc
+adci  .num_cols
 sec
 sbci  .ycoord
-sbca  .shape_table 1
 
 ; Main loop. Move shape.
 .main_loop_start
@@ -179,11 +190,9 @@ staz  .y_start
 ; Set maximum Y (in .shape_coords + 1 in bytes)
 ldai  01
 tay
-ldaz  .shape_coords 1
+ldaz  .y_start
 clc
 adcny .shape_table_addr
-tay
-ldaay .div7_table_addr
 staz  .shape_coords 1
 
 ; Finally, set Y
