@@ -1,7 +1,7 @@
 ; Code to test moving of shapes horizontally. The result should be a tiny image
 ; of a man and woman, roughly in the middle of the screen, that moves from far
-; left to far right. Movement should now be smooth with the new shape shifting
-; subroutine.
+; left to far right, comes back, and repeats. Movement should now be smooth with
+; the new shape shifting subroutine.
 
 ; Shape table (man and woman)
 org 5FEB
@@ -82,8 +82,7 @@ bne   .div7_table_fill_loop
 label shape_addr_h 5F
 label shape_addr_l EB
 label xcoord 50
-label ycoord 00
-label delay  FF
+label delay  80
 label wait   FCA8
 
 ; Store shape information
@@ -93,13 +92,13 @@ ldai  .shape_addr_h
 staz  .shape_table_addr 1
 ldai  .xcoord
 staz  .shape_coords
-ldai  .ycoord
+ldai  00
 staz  .shape_coords 1
 ; -------------------- End set shape and draw constants --------------------
 
 
 ; -------------------- Main loop --------------------
-; Compute number of iterations to move shape to end of screen
+; Compute number of iterations to move shape across screen (.num_steps)
 
 ; Compute negative of width in number of pixels
 ldaa  .shape_table 2
@@ -110,29 +109,44 @@ eori  FF
 clc
 adci  01
 
-; Combine with total number of columns and coordinate
+; Add number of columns
 clc
 adci  .num_cols
-sec
-sbci  .ycoord
 
-; Main loop. Move shape.
+zbyte num_steps
+staz  .num_steps
+tax ; loop counter
+
+; Main loop.
 .main_loop_start
+
+; Inner loop that moves shape right
+.main_inner_loop_move_right
 jsra  .draw_shape
-pha
 ldai  .delay
 jsra  .wait
-jsra  .wait
-jsra  .wait
-jsra  .wait
-pla
 jsra  .draw_shape
-incz  .shape_coords 1
-sec
-sbci  01
-bne   .main_loop_start
 
-; Just freeze on completion
+incz  .shape_coords 1
+dex
+bne   .main_inner_loop_move_right
+
+; Inner loop that moves shape left
+.main_inner_loop_move_left
+decz  .shape_coords 1
+inx
+
+jsra  .draw_shape
+ldai  .delay
+jsra  .wait
+jsra  .draw_shape
+
+cpxz  .num_steps
+bne   .main_inner_loop_move_left
+beq   .main_loop_start
+
+
+; Just freeze if we ever get here (depends on if above loop is infinite)
 jsra  .draw_shape
 .finished
 jmpa .finished
