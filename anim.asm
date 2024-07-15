@@ -101,7 +101,9 @@ staz  .shape_coords 1
 ; Compute number of iterations to move shape across screen (.num_steps)
 
 ; Compute negative of width in number of pixels
+; Y is unused except for erase subroutine call, so go ahead and set it.
 ldaa  .shape_table 2
+tay
 asl
 asl
 asl
@@ -125,7 +127,10 @@ tax ; loop counter
 jsra  .draw_shape
 ldai  .delay
 jsra  .wait
-jsra  .draw_shape
+txa
+ldxa  .shape_table 1
+jsra  .erase_shape
+tax
 
 incz  .shape_coords 1
 dex
@@ -139,7 +144,10 @@ inx
 jsra  .draw_shape
 ldai  .delay
 jsra  .wait
-jsra  .draw_shape
+txa
+ldxa  .shape_table 1
+jsra  .erase_shape
+tax
 
 cpxz  .num_steps
 bne   .main_inner_loop_move_left
@@ -227,7 +235,6 @@ jsra  .line_index_to_address
 ; Write to screen
 .draw_shape_table_load_instr
 ldaa  0000
-eorny .line_address
 stany .line_address
 
 ; Increment above load address for next loop
@@ -247,6 +254,85 @@ ldyz  .y_start
 inx
 cpxz  .shape_coords
 bne   .draw_shape_loop_start
+
+; Restore registers and zero bytes and return
+pla
+staz  .shape_coords
+pla
+staz  .shape_coords 1
+pla
+tay
+pla
+tax
+pla
+rts
+; -------------------- End subroutine --------------------
+
+; Subroutine to erase a shape
+; This is a simpler version of the draw subroutine, because we only need to
+; fill in zeroes and do not need the shape table.
+; Input: Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
+;        (pixel coordinates for horizontal, which are converted to byte
+;         coordinates internally as needed)
+;        X: Height of shape
+;        Y: Length of shape
+; All registers and zbytes are restored.
+
+; Subroutine start
+.erase_shape
+
+; Save registers and zero bytes
+pha
+txa
+pha
+tya
+pha
+ldaz  .shape_coords 1
+pha
+ldaz  .shape_coords
+pha
+
+; Set X and maximum X (in .shape_coords)
+txa
+ldxz  .shape_coords
+clc
+adcz  .shape_coords
+staz  .shape_coords
+
+; Compute starting coordinate (in bytes) for Y
+tya ; Save width for later
+pha
+ldyz  .shape_coords 1
+ldaay .div7_table_addr
+
+zbyte y_start
+staz  .y_start
+tay
+
+; Set Y and maximum Y (in .shape_coords + 1 in bytes)
+pla ; width
+clc
+adcz  .y_start
+staz  .shape_coords 1
+
+; Now we can start erasing
+.erase_shape_loop_start
+jsra  .line_index_to_address
+
+; Write to screen
+ldai  00
+stany .line_address
+
+; Check for end of row
+iny
+cpyz  .shape_coords 1
+bne   .erase_shape_loop_start
+
+; Reset row and check if this is last row
+ldyz  .y_start
+inx
+cpxz  .shape_coords
+bne   .erase_shape_loop_start
 
 ; Restore registers and zero bytes and return
 pla
