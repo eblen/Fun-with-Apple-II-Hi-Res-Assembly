@@ -119,40 +119,82 @@ zbyte num_steps
 staz  .num_steps
 tax ; loop counter
 
-; Main loop.
-.main_loop_start
 
-; Inner loop that moves shape right
-.main_inner_loop_move_right
+; Main loops (one for moving right and one for moving left)
+
+; Loop that moves shape right
+.main_loop_move_right
+
+; Draw new shape
 jsra  .draw_shape
 ldai  .delay
 jsra  .wait
-txa
+
+dex
+beq   .main_loop_move_left
+
+
+txa ; Preserve X and Y
+pha
+tya
+pha
+
+; Shift shape table for next coordinate
+ldxz  .shape_coords 1
+inx
+jsra  .shift_shape_table
+
+; Restore Y
+pla
+tay
+
+; Erase previous shape
 ldxa  .shape_table 1
 jsra  .erase_shape
-tax
 
 incz  .shape_coords 1
-dex
-bne   .main_inner_loop_move_right
 
-; Inner loop that moves shape left
-.main_inner_loop_move_left
-decz  .shape_coords 1
-inx
+pla ; Restore X
+tax
 
+bne   .main_loop_move_right ; always jumps
+
+; Loop that moves shape left
+.main_loop_move_left
+
+; Draw new shape
 jsra  .draw_shape
 ldai  .delay
 jsra  .wait
-txa
+
+inx
+cpxz  .num_steps
+beq   .main_loop_move_right
+
+txa ; Preserve X and Y
+pha
+tya
+pha
+
+; Shift shape table for next coordinate
+ldxz  .shape_coords 1
+dex
+jsra  .shift_shape_table
+
+; Restore Y
+pla
+tay
+
+; Erase previous shape
 ldxa  .shape_table 1
 jsra  .erase_shape
+
+decz  .shape_coords 1
+
+pla ; Restore X
 tax
 
-cpxz  .num_steps
-bne   .main_inner_loop_move_left
-beq   .main_loop_start
-
+bne   .main_loop_move_left ; always jumps
 
 ; Just freeze if we ever get here (depends on if above loop is infinite)
 jsra  .draw_shape
@@ -183,11 +225,6 @@ ldaz  .shape_coords 1
 pha
 ldaz  .shape_coords
 pha
-
-; Shift shape
-; Do first since subroutine does not preserve registers
-ldxz  .shape_coords 1
-jsra  .shift_shape_table
 
 ; Set shape table address in load instruction.
 ; Warning: We only increment address low byte by two to get to raw shape data.
