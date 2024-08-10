@@ -109,7 +109,7 @@ asl
 asl
 eori  FF
 clc
-adci  01
+adci  02
 
 ; Add number of columns
 clc
@@ -131,6 +131,7 @@ ldai  .delay
 jsra  .wait
 
 dex
+dex
 beq   .main_loop_move_left
 
 
@@ -142,6 +143,7 @@ pha
 ; Shift shape table for next coordinate
 ldxz  .shape_coords 1
 inx
+inx
 jsra  .shift_shape_table
 
 ; Restore Y
@@ -152,6 +154,7 @@ tay
 ldxa  .shape_table 1
 jsra  .erase_shape
 
+incz  .shape_coords 1
 incz  .shape_coords 1
 
 pla ; Restore X
@@ -168,6 +171,7 @@ ldai  .delay
 jsra  .wait
 
 inx
+inx
 cpxz  .num_steps
 beq   .main_loop_move_right
 
@@ -179,6 +183,7 @@ pha
 ; Shift shape table for next coordinate
 ldxz  .shape_coords 1
 dex
+dex
 jsra  .shift_shape_table
 
 ; Restore Y
@@ -189,6 +194,7 @@ tay
 ldxa  .shape_table 1
 jsra  .erase_shape
 
+decz  .shape_coords 1
 decz  .shape_coords 1
 
 pla ; Restore X
@@ -466,18 +472,12 @@ dey
 clc
 .shift_left_inner_loop
 
-; Do the shifting. Because only 7 bits are used for the shape, we manually
-; set the carry for the next rotation based on the new value of bit 7. Ignore
-; bit 7 otherwise, but this will probably change once we start handling colors.
+; Do the shifting. Afterwards, restore bit 7 and set bit 6 to the shifted in
+; value. In other words, swap bits 6 and 7.
 .shift_shape_table_left_load_instr
 ldaay 0000
 ror
-bpl   .no_carry_on_left_shift
-orai  40
-bne   .carry_on_left_shift
-.no_carry_on_left_shift
-andi  BF
-.carry_on_left_shift
+jsra  .swap_bits_6_and_7
 .shift_shape_table_left_store_instr
 staay 0000
    
@@ -524,11 +524,11 @@ ldxz  .shape_table_addr
 inx
 inx
 inx
-stxa  .shift_shape_table_right_instr 1
-stxa  .shift_shape_table_right_instr 4
+stxa  .shift_shape_table_right_load_instr  1
+stxa  .shift_shape_table_right_store_instr 1
 ldxz  .shape_table_addr 1
-stxa  .shift_shape_table_right_instr 2
-stxa  .shift_shape_table_right_instr 5
+stxa  .shift_shape_table_right_load_instr  2
+stxa  .shift_shape_table_right_store_instr 2
 
 ; Initialize X (Y = 0 already)
 ldai  00
@@ -538,23 +538,21 @@ tax
 clc
 .shift_right_inner_loop
 
-; Do the shifting. Because only 7 bits are used for the shape, we manually
-; set the carry for the next rotation based on the new value of bit 7. Ignore
-; bit 7 otherwise, but this will probably change once we start handling colors.
-.shift_shape_table_right_instr
-rola  0000
-bita  0000
-clc
-bpl   .no_carry_on_right_shift
-sec
-.no_carry_on_right_shift
+; Do the shifting. First, though, make sure bit 7 is preserved and bit 6 gets
+; put into the carry. In other words, swap bits 6 and 7.
+.shift_shape_table_right_load_instr
+ldaa  0000
+jsra  .swap_bits_6_and_7
+rol
+.shift_shape_table_right_store_instr
+staa  0000
    
 ; Increment above addresses for next loop
-inca  .shift_shape_table_right_instr 1
-inca  .shift_shape_table_right_instr 4
+inca  .shift_shape_table_right_load_instr  1
+inca  .shift_shape_table_right_store_instr 1
 bne   .no_shape_table_addr_overflow_while_shifting_right
-inca  .shift_shape_table_right_instr 2
-inca  .shift_shape_table_right_instr 5
+inca  .shift_shape_table_right_load_instr  2
+inca  .shift_shape_table_right_store_instr 2
 .no_shape_table_addr_overflow_while_shifting_right
 
 ; Check for end of row
@@ -634,4 +632,29 @@ tay
 pla
 rts
 ; -------------------- End subroutine --------------------
+
+
+; -------------------- Useful utility subroutines --------------------
+
+; Subroutine to swap bits 6 and 7
+; This is very useful for hi-res graphics when shifting shape tables, either
+; before a left shift or after a right shift. We often want to preserve bit 7
+; (color information) and either shift out or shift in bit 6, which is part of
+; the shape.
+; Input:  A
+; Output: A with bits swapped
+; Status flags are preserved
+.swap_bits_6_and_7
+
+; Algorithm is to xor with 11000000 when the two bits differ (when A is in the
+; range [01000000, 10111111]).
+php
+cmpi  40
+bcc   .exit_bit_swap_subroutine
+cmpi  C0
+bcs   .exit_bit_swap_subroutine
+eori  C0 ; Flip bits 6 and 7
+.exit_bit_swap_subroutine
+plp
+rts
 
