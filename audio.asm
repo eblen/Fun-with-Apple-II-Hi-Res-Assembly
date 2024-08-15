@@ -30,10 +30,39 @@ cmpi  .last_pitch
 bcc   .sound_test_main_loop
 rts
 
+org 6100
+.happy_birthday_song_data
+; data 1B601B6017601B60146015601B601B6017601B60126014600000
+data 366036603060366028602B60FF40366036603060366024602860FF40
+data 36601B60206028602B603060FF401E6020602860246028A00000
+
+org 6200
+zbyte hbdata 2
+ldai  00
+staz  .hbdata
+ldai  61
+staz  .hbdata 1
+
+.play_song_main_loop
+ldyi  00
+ldany .hbdata
+bne   .sound_continues
+rts
+.sound_continues
+tax
+iny
+ldany .hbdata
+tay
+jsra  .play_sound
+incz  .hbdata
+incz  .hbdata
+bne   .play_song_main_loop
+
 org 7000
 
 ; Subroutine to play a given sound (pitch) for a given length of time
 ; Input:  X: pitch Y: length
+; Set X=FF to pause for the given length of time instead of playing a note.
 .play_sound
 
 ; Values for AND'ing with BIT instruction
@@ -80,7 +109,12 @@ ldyi  00
 ; Outer loop
 .sound_outer_loop
 ; Actually toggle speaker
+; Allow user to specify a pause with pitch $FF
+ldaa  .sound_pitch
+cmpi  FF
+beq   .play_silent_note
 bita  30C0
+.play_silent_note
 
 ; A becomes modulo counter (when to decrement X)
 ldai  01
