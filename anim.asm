@@ -1,86 +1,29 @@
-; Code to test moving of shapes horizontally. The result should be a tiny image
-; of a man and woman, roughly in the middle of the screen, that moves from far
-; left to far right, comes back, and repeats. Movement should now be smooth with
-; the new shape shifting subroutine.
+; Various codes for hi-res graphics, including useful subroutines, code to test
+; them, and games that rely on them.
 
-; Shape table (man and woman)
-org 5FEB
-.shape_table
-data 000603081C003E2A005D08001C5D00141400222200
+; Shape tables
 
 org 6000
 
-; -------------------- Initialize graphics mode --------------------
-label graphics  C050
-label hires     C057
-label page1     C054
-label mixoff    C052
-label target    2000
-label num_lines C0
-label num_cols  FF
+; Man and woman
+.man_and_woman_shape_table
+data 000603081C003E2A005D08001C5D00141400222200
 
-ldaa   .graphics
-ldaa   .hires
-ldaa   .page1
-ldaa   .mixoff
+org 6100
 
-; Now blank all pixels
-.clr1
-ldai  00
-ldyi  00
+; ------------------------- Code to test subroutines -------------------------
+; Code to test moving of shapes horizontally. The result should be a tiny image
+; of a man and woman, roughly in the middle of the screen, that moves from far
+; left to far right, comes back, and repeats. Movement is made smooth by using
+; the shape-shifting subroutine.
 
-; Do actual blanking of byte
-.clr
-stany 26
-iny
-bne   .clr
-; End inner loop
-
-incz  27
-ldaz  27
-cmpi  40
-bcc   .clr1
-; -------------------- End initialize graphics mode --------------------
-
-
-; -------------------- Create table of div 7 values --------------------
-; Code to make a table of dividends of 7, which occupies page 8 ($800 to $8FF).
-; This table is useful for pixel calculations (horizontal) in hi-res since,
-; annoyingly, each byte in hi-res memory represents 7 pixels rather than 8.
-
-; The table only goes to 255 rather than 279. However, this is not much of a
-; limitation because these values are used for starting addresses for shapes,
-; which leaves three bytes for the shape width.
-
-; Warning: This must be done after initializing hi-res graphics or "anomalies"
-; appear in the graphics. Not sure why, but it has to do with where the table
-; is stored, which relates to lo-res graphics.
-label div7_table_addr 0800
-
-ldai  00
-ldxi  00
-ldyi  00
-
-.div7_table_fill_loop
-staay .div7_table_addr
-inx
-cpxi  07
-bne   .div7_row_continue
-
-tax
-inx
-txa
-ldxi  00
-
-.div7_row_continue
-iny
-bne   .div7_table_fill_loop
-; -------------------- End create table of div 7 values --------------------
-
+; Initialize graphics and data tables
+jsra  .init_hires_graphics
+jsra  .create_div7_table
 
 ; -------------------- Set shape and draw constants --------------------
-label shape_addr_h 5F
-label shape_addr_l EB
+label shape_addr_h 60
+label shape_addr_l 00
 label xcoord 50
 label delay  80
 label wait   FCA8
@@ -102,7 +45,7 @@ staz  .shape_coords 1
 
 ; Compute negative of width in number of pixels
 ; Y is unused except for erase subroutine call, so go ahead and set it.
-ldaa  .shape_table 2
+ldaa  .man_and_woman_shape_table 2
 tay
 asl
 asl
@@ -111,9 +54,9 @@ eori  FF
 clc
 adci  02
 
-; Add number of columns
+; Add number of columns (255)
 clc
-adci  .num_cols
+adci  FF
 
 zbyte num_steps
 staz  .num_steps
@@ -151,7 +94,7 @@ pla
 tay
 
 ; Erase previous shape
-ldxa  .shape_table 1
+ldxa  .man_and_woman_shape_table 1
 jsra  .erase_shape
 
 incz  .shape_coords 1
@@ -191,7 +134,7 @@ pla
 tay
 
 ; Erase previous shape
-ldxa  .shape_table 1
+ldxa  .man_and_woman_shape_table 1
 jsra  .erase_shape
 
 decz  .shape_coords 1
@@ -207,7 +150,14 @@ jsra  .draw_shape
 .finished
 jmpa .finished
 ; -------------------- End main loop --------------------
+; -------------------- End code to test subroutines --------------------
 
+
+; ------------------ Begin subroutines ------------------
+
+org 7000
+
+; Subroutines to handle drawing, erasing, and frame-shifting of shape tables
 
 ; Subroutine to draw a shape described by a shape table
 ; Input: Zero-page shape table address (not table itself) in "shape_table_addr"
@@ -311,6 +261,7 @@ pla
 rts
 ; -------------------- End subroutine --------------------
 
+
 ; Subroutine to erase a shape
 ; This is a simpler version of the draw subroutine, because we only need to
 ; fill in zeroes and do not need the shape table.
@@ -389,6 +340,7 @@ tax
 pla
 rts
 ; -------------------- End subroutine --------------------
+
 
 ; Subroutine to shift a shape table for a given column
 ; Input:  Zero-page shape table address (not table itself) in "shape_table_addr"
@@ -634,7 +586,78 @@ rts
 ; -------------------- End subroutine --------------------
 
 
-; -------------------- Useful utility subroutines --------------------
+; Useful subroutines for dealing with hi-res graphics
+
+; Subroutine to initialize Hi-Res graphics mode
+.init_hires_graphics
+
+label graphics  C050
+label hires     C057
+label page1     C054
+label mixoff    C052
+
+ldaa   .graphics
+ldaa   .hires
+ldaa   .page1
+ldaa   .mixoff
+
+; Now blank all pixels
+.clr1
+ldai  00
+ldyi  00
+
+; Do actual blanking of byte
+.clr
+stany 26
+iny
+bne   .clr
+; End inner loop
+
+incz  27
+ldaz  27
+cmpi  40
+bcc   .clr1
+rts
+; -------------------- End subroutine --------------------
+
+
+; Subroutine to create table of div 7 values
+; Code to make a table of dividends of 7, which occupies page 8 ($800 to $8FF).
+; This table is useful for pixel calculations (horizontal) in hi-res since,
+; annoyingly, each byte in hi-res memory represents 7 pixels rather than 8.
+
+; The table only goes to 255 rather than 279. However, this is not much of a
+; limitation because these values are used for starting addresses for shapes,
+; which leaves three bytes for the shape width.
+
+; Warning: This must be done after initializing hi-res graphics or "anomalies"
+; appear in the graphics. Not sure why, but it has to do with where the table
+; is stored, which relates to lo-res graphics.
+.create_div7_table
+
+label div7_table_addr 0800
+
+ldai  00
+ldxi  00
+ldyi  00
+
+.div7_table_fill_loop
+staay .div7_table_addr
+inx
+cpxi  07
+bne   .div7_row_continue
+
+tax
+inx
+txa
+ldxi  00
+
+.div7_row_continue
+iny
+bne   .div7_table_fill_loop
+rts
+; -------------------- End subroutine --------------------
+
 
 ; Subroutine to swap bits 6 and 7
 ; This is very useful for hi-res graphics when shifting shape tables, either
