@@ -9,6 +9,12 @@ org 6000
 .man_and_woman_shape_table
 data 000603081C003E2A005D08001C5D00141400222200
 
+org 6020
+
+.snake_segment
+data 000302280028002800
+label bits_per_snake_segment 04
+
 org 6100
 
 ; ------------------------- Code to test subroutines -------------------------
@@ -148,9 +154,357 @@ bne   .main_loop_move_left ; always jumps
 ; Just freeze if we ever get here (depends on if above loop is infinite)
 jsra  .draw_shape
 .finished
-jmpa .finished
+jmpa  .finished
 ; -------------------- End main loop --------------------
 ; -------------------- End code to test subroutines --------------------
+
+org 6200
+
+; -------------------- Snake Game --------------------
+; Snake data structure
+; 0:    X coordinate of head
+; 1:    Y coordinate of head
+; 2:    X coordinate of tail
+; 3:    Y coordinate of tail
+; 4:    Tail direction
+; 5:    length of snake's body, excluding the head
+; 6-30: body segments (2 bits per segment, indicating its position relative to
+;                      the prior segment or to the head for the first segment)
+;       0: down
+;       1: up
+;       2: right
+;       3: left
+; Snake body can be from 0-100 segments long (head is always present)
+zbyte snake_data 30 ; zbyte lengths are in decimal. SASM is inconsistent in
+                    ; this case, since all other values are hexadecimal.
+
+; Initialize graphics and data tables
+jsra  .init_hires_graphics
+jsra  .create_div7_table
+
+; Draw a sample snake to start
+ldai  20 ; X coordinate
+staz  .snake_data
+ldai  20 ; Y coordinate
+staz  .snake_data 1
+ldai  FF ; X coordinate for tail... value doesn't really matter
+staz  .snake_data 2
+ldai  FF ; Y coordinate for tail... value doesn't really matter
+staz  .snake_data 3
+ldai  FF ; Tail direction... value doesn't really matter
+staz  .snake_data 4
+ldai  0C ; length 12
+staz  .snake_data 5
+ldai  F0 ; 2 left, 2 down
+staz  .snake_data 6
+ldai  AA ; 4 right
+staz  .snake_data 7
+ldai  55 ; 4 up
+staz  .snake_data 8
+
+; Input: Zero-page shape table address (not table itself) in "shape_table_addr"
+;        Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
+;        (pixel coordinates for horizontal, which are converted to byte
+;         coordinates internally as needed)
+
+; Initialize shape table and coordinates
+ldai  20
+staz  .shape_table_addr
+ldai  60
+staz  .shape_table_addr 1
+ldaz  .snake_data
+staz  .shape_coords
+ldaz  .snake_data 1
+staz  .shape_coords 1
+
+
+; Store step size for snake's vertical and horizontal movement.
+; Vertical step size is just the height. Horizontal step size is in bits
+; (pixels). It depends on how many bits are used for the snake segment, a number
+; less than width * 8, which includes padding bits (for frame shifting). So
+; we define that as a label below the shape table (see above).
+zbyte snake_vertical_step
+ldaa  .snake_segment 1
+staz  .snake_vertical_step
+
+; Currently, we use 4 bits for the segment.
+zbyte snake_horizontal_step
+ldai  .bits_per_snake_segment
+staz  .snake_horizontal_step
+
+; First drawing of snake, which is done once to draw head and all segments
+; Registers
+; X: segment pattern (4 segments per byte)
+; Y: loop counter (segment index)
+
+; Loop to draw snake
+ldyi  FF
+.draw_next_segment
+
+; First iteration will draw the head of the snake rather than a segment
+txa
+pha
+tya
+pha
+ldxz  .shape_coords 1
+jsra  .shift_shape_table
+jsra  .draw_shape
+pla
+tay
+pla
+tax
+
+; Bail if no more segments to draw
+iny
+cpyz  .snake_data 5 ; length of snake
+beq   .end_drawing_of_snake_segments
+
+; Load new segment pattern every 4th iteration (includes first iteration)
+tya
+andi  03
+bne   .keep_current_segment_byte
+
+; Compute segment index
+tya
+lsr
+lsr
+clc
+adci  06
+tax
+
+; Load segment pattern into X
+ldazx .snake_data
+tax
+; End load new segment pattern
+.keep_current_segment_byte
+
+; Move segment based on leftmost two bits of X
+txa
+
+; First, though, copy direction to tail position direction
+; (Only last iteration's value is actually needed.)
+staz  .snake_data 4
+lsrz  .snake_data 4
+lsrz  .snake_data 4
+lsrz  .snake_data 4
+lsrz  .snake_data 4
+lsrz  .snake_data 4
+lsrz  .snake_data 4
+
+clc
+rol
+bcs   .move_segment_left_or_right
+
+; Move up or down
+rol
+tax ; Store segment pattern for next iteration (rotated left twice)
+ldaz  .shape_coords
+bcs   .move_segment_up
+adcz  .snake_vertical_step
+staz  .shape_coords
+bcc   .end_move_segment ; should always jump
+.move_segment_up
+sbcz  .snake_vertical_step
+staz  .shape_coords
+bcs   .end_move_segment ; should always jump
+
+; Move left or right
+.move_segment_left_or_right
+rol
+tax ; Store segment pattern for next iteration (rotated left twice)
+ldaz  .shape_coords 1
+bcs   .move_segment_left
+adcz  .snake_horizontal_step
+staz  .shape_coords 1
+bcc   .end_move_segment ; should always jump
+.move_segment_left
+sbcz  .snake_horizontal_step
+staz  .shape_coords 1
+.end_move_segment
+jmpa  .draw_next_segment
+.end_drawing_of_snake_segments
+; end drawing of snake segments
+
+; Store tail coordinates needed in main loop
+ldaz .shape_coords
+staz .snake_data 2
+ldaz .shape_coords 1
+staz .snake_data 3
+
+; -------------------- Main Snake Game Loop --------------------
+; Currently, just move head up a few times to test that it works correctly
+.snake_game_main_loop
+
+; Pause between drawing and moving
+ldai  FF
+jsra  .wait
+ldai  FF
+jsra  .wait
+
+; -------------------- Move Snake Head --------------------
+; Move head up
+; Later, this will read keyboard commands
+ldaz  .snake_data
+sec
+sbcz  .snake_vertical_step
+staz  .snake_data
+; ------------------ End Move Snake Head ------------------
+
+; ------------------ Move Snake Segments ------------------
+; Move snake by right-shifting segment bytes
+; Registers
+; X: Snake data byte number
+; Y: Outer loop counter (rotate twice since there are two bits per segment)
+
+; Compute last byte of snake data (snake length + 3)
+ldaz  .snake_data 5
+clc
+adci  03
+lsr
+lsr
+clc
+adci  06 ; Six byte offset into snake data
+zbyte snake_data_end_byte
+staz  .snake_data_end_byte
+
+; Initialize X and Y
+ldxi  06 ; Segment data starts at byte three
+ldyi  02
+
+; Inner loop to rotate bytes
+.shift_segment_bytes_outer_loop
+clc
+
+.shift_segment_bytes_inner_loop
+txa
+eorz  .snake_data_end_byte ; Compare here in case length is zero
+                           ; Use eor to preserve the carry flag
+beq   .end_shift_segment_bytes_inner_loop
+ldazx .snake_data
+ror
+stazx .snake_data
+inx
+bne   .shift_segment_bytes_inner_loop ; always jumps
+.end_shift_segment_bytes_inner_loop
+
+; Check if one more outer loop is needed (2 total)
+ldxi  06
+dey
+bne   .shift_segment_bytes_outer_loop
+; End segment shifting
+
+; Set first segment direction in terms of head direction
+; For now, just set to "down" since head always moves up
+; WARNING: real implementation needs to abort if length is zero
+ldai  3F
+andz  .snake_data 6
+staz  .snake_data 6
+; ---------------- End Move Snake Segments ----------------
+
+; -------------- Draw snake (just draw head and erase tail) --------------
+
+; Draw head
+ldxz  .snake_data
+stxz  .shape_coords
+ldxz  .snake_data 1
+stxz  .shape_coords 1
+jsra  .shift_shape_table
+jsra  .draw_shape
+
+; Erase tail
+ldxz  .snake_data 2
+stxz  .shape_coords
+ldxz  .snake_data 3
+stxz  .shape_coords 1
+jsra  .shift_shape_table
+jsra  .erase_shape
+
+; Store new tail coordinates based on old tail direction.
+; Note that new tail position is opposite of old tail direction
+; (So decrement for "right" and increment for "left" for example.)
+ldaz  .snake_data 4
+lsr
+bcs   .old_tail_is_up_or_left
+lsr
+bcs   .old_tail_is_right
+ldaz  .snake_data 2
+sec
+sbcz  .snake_vertical_step ; down
+staz  .snake_data 2
+bcs   .end_set_new_tail ; always jumps
+.old_tail_is_right
+ldaz  .snake_data 3
+sbcz  .snake_horizontal_step ; right
+staz  .snake_data 3
+bcs   .end_set_new_tail ; always jumps
+.old_tail_is_up_or_left
+lsr
+bcs   .old_tail_is_left
+ldaz  .snake_data 2
+adcz  .snake_vertical_step ; up
+staz  .snake_data 2
+bcc   .end_set_new_tail ; always jumps
+.old_tail_is_left
+ldaz  .snake_data 3
+clc
+adcz  .snake_horizontal_step ; left
+staz  .snake_data 3
+.end_set_new_tail
+
+; Store new tail direction
+
+; Compute index of pattern (byte) containing tail
+ldaz  .snake_data 5 ; snake length
+sec
+sbci  01
+lsr
+lsr
+clc
+adci  06
+
+; Load pattern to X
+tax
+ldazx .snake_data
+tax
+
+; Compute exact location of tail in this byte
+ldaz  .snake_data 5 ; snake length
+sec
+sbci  01
+andi  03
+eori  03
+tay
+iny
+txa
+
+; Shift tail bits to the end
+dey
+beq  .end_shift_tail_pattern
+.shift_tail_pattern
+lsr
+lsr
+dey
+bne  .shift_tail_pattern
+.end_shift_tail_pattern
+
+; Store result
+andi  03
+staz  .snake_data 4
+
+; ------------------ End draw snake ------------------
+
+; For now, exit when snake head reaches top of screen
+; Otherwise, start another loop
+ldaz  .snake_data
+bmi   .finished_drawing_snake
+jmpa  .snake_game_main_loop
+
+; ------------------ End Main Snake Game Loop ------------------
+
+; Pause machine if/when game ends
+.finished_drawing_snake
+jmpa  .finished_drawing_snake
+; -------------------- End Snake Game --------------------
 
 
 ; ------------------ Begin subroutines ------------------
