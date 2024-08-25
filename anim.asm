@@ -95,7 +95,7 @@ tay
 
 ; Erase previous shape
 ldxa  .man_and_woman_shape_table 1
-jsra  .erase_shape
+jsra  .erase_square
 
 incz  .shape_coords 1
 incz  .shape_coords 1
@@ -135,7 +135,7 @@ tay
 
 ; Erase previous shape
 ldxa  .man_and_woman_shape_table 1
-jsra  .erase_shape
+jsra  .erase_square
 
 decz  .shape_coords 1
 decz  .shape_coords 1
@@ -159,7 +159,12 @@ org 7000
 
 ; Subroutines to handle drawing, erasing, and frame-shifting of shape tables
 
-; Subroutine to draw a shape described by a shape table
+; Subroutine to draw a shape described by a shape table with two entry points:
+; ".draw_shape" or ".erase_shape"
+; Both of these are "careful" in that only pixels set in the shape table are
+; affected. So draw does no erasing and erase does no drawing nor does it erase
+; pixels not set in the shape table. This improves on "eor" drawing and erasing,
+; which can destroy other shapes and requires alternating drawing and erasing.
 ; Input: Zero-page shape table address (not table itself) in "shape_table_addr"
 ;        Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
 ;        (pixel coordinates for horizontal, which are converted to byte
@@ -167,12 +172,25 @@ org 7000
 ; All registers and zbytes are restored.
 zbyte shape_table_addr 2
 zbyte shape_coords     2
+zbyte draw_or_erase ; boolean value: Draw or erase shape?
+                    ; 0: draw, 1: erase
 
 ; Subroutine start
+
+; Set whether to draw or erase based on subroutine entry point
 .draw_shape
+pha
+ldai  00
+staz  .draw_or_erase
+beq   .skip_set_erase
+
+.erase_shape
+pha
+ldai  40 ; Bit 6 allows us to use "bit" and the overflow flag later
+staz  .draw_or_erase
+.skip_set_erase
 
 ; Save registers and zero bytes
-pha
 txa
 pha
 tya
@@ -228,6 +246,23 @@ jsra  .line_index_to_address
 ; Write to screen
 .draw_shape_table_load_instr
 ldaa  0000
+bitz  .draw_or_erase
+
+; Use overflow flag, which is unchanged by logical operations
+bvs   .erase_shape_table_bytes
+
+; Careful draw: Do no erasing of other pixels
+orany .line_address
+bvc   .store_new_screen_byte ; always jumps
+
+; Careful erase: Only erase pixels set in the shape table
+; Formula is (not B) & A where B is the shape table pattern
+; and A is the existing pattern.
+.erase_shape_table_bytes
+eori  FF
+andny .line_address
+
+.store_new_screen_byte
 stany .line_address
 
 ; Increment above load address for next loop
@@ -262,18 +297,19 @@ rts
 ; -------------------- End subroutine --------------------
 
 
-; Subroutine to erase a shape
-; This is a simpler version of the draw subroutine, because we only need to
-; fill in zeroes and do not need the shape table.
+; Subroutine to erase a square on the screen.
+; This is a simpler version of the draw/erase subroutine, because we only need
+; to fill in zeroes and do not need a shape table. However, this means ALL
+; pixels are erased in the square, unlike ".erase_shape."
 ; Input: Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
 ;        (pixel coordinates for horizontal, which are converted to byte
 ;         coordinates internally as needed)
-;        X: Height of shape
-;        Y: Length of shape
+;        X: Height of shape in bytes
+;        Y: Length of shape in bits
 ; All registers and zbytes are restored.
 
 ; Subroutine start
-.erase_shape
+.erase_square
 
 ; Save registers and zero bytes
 pha
@@ -310,7 +346,7 @@ adcz  .y_start
 staz  .shape_coords 1
 
 ; Now we can start erasing
-.erase_shape_loop_start
+.erase_square_loop_start
 jsra  .line_index_to_address
 
 ; Write to screen
@@ -320,13 +356,13 @@ stany .line_address
 ; Check for end of row
 iny
 cpyz  .shape_coords 1
-bne   .erase_shape_loop_start
+bne   .erase_square_loop_start
 
 ; Reset row and check if this is last row
 ldyz  .y_start
 inx
 cpxz  .shape_coords
-bne   .erase_shape_loop_start
+bne   .erase_square_loop_start
 
 ; Restore registers and zero bytes and return
 pla
