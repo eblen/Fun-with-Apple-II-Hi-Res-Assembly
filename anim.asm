@@ -161,22 +161,33 @@ jmpa  .finished
 org 6200
 
 ; -------------------- Snake Game --------------------
+label down  00
+label up    01
+label right 02
+label left  03
+label i E9
+label j EA
+label k EB
+label l EC
+
 ; Snake data structure
 ; 0:    X coordinate of head
 ; 1:    Y coordinate of head
-; 2:    X coordinate of tail
-; 3:    Y coordinate of tail
-; 4:    Tail direction
-; 5:    length of snake's body, excluding the head
-; 6-30: body segments (2 bits per segment, indicating its position relative to
+; 2:    Head direction
+; 3:    X coordinate of tail
+; 4:    Y coordinate of tail
+; 5:    Tail direction
+; 6:    length of snake's body, excluding the head
+; 7-31: body segments (2 bits per segment, indicating its position relative to
 ;                      the prior segment or to the head for the first segment)
 ;       0: down
 ;       1: up
 ;       2: right
 ;       3: left
 ; Snake body can be from 0-100 segments long (head is always present)
-zbyte snake_data 30 ; zbyte lengths are in decimal. SASM is inconsistent in
+zbyte snake_data 32 ; zbyte lengths are in decimal. SASM is inconsistent in
                     ; this case, since all other values are hexadecimal.
+label snake_segments_offset 07
 
 ; Initialize graphics and data tables
 jsra  .init_hires_graphics
@@ -187,20 +198,22 @@ ldai  20 ; X coordinate
 staz  .snake_data
 ldai  20 ; Y coordinate
 staz  .snake_data 1
-ldai  FF ; X coordinate for tail... value doesn't really matter
+ldai  .up ; Set "up" as initial head direction
 staz  .snake_data 2
-ldai  FF ; Y coordinate for tail... value doesn't really matter
+ldai  FF ; X coordinate for tail... value doesn't really matter
 staz  .snake_data 3
-ldai  FF ; Tail direction... value doesn't really matter
+ldai  FF ; Y coordinate for tail... value doesn't really matter
 staz  .snake_data 4
-ldai  0C ; length 12
+ldai  FF ; Tail direction... value doesn't really matter
 staz  .snake_data 5
-ldai  F0 ; 2 left, 2 down
+ldai  0C ; length 12
 staz  .snake_data 6
-ldai  AA ; 4 right
+ldai  F0 ; 2 left, 2 down
 staz  .snake_data 7
-ldai  55 ; 4 up
+ldai  AA ; 4 right
 staz  .snake_data 8
+ldai  55 ; 4 up
+staz  .snake_data 9
 
 ; Input: Zero-page shape table address (not table itself) in "shape_table_addr"
 ;        Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
@@ -256,7 +269,7 @@ tax
 
 ; Bail if no more segments to draw
 iny
-cpyz  .snake_data 5 ; length of snake
+cpyz  .snake_data 6 ; length of snake
 beq   .end_drawing_of_snake_segments
 
 ; Load new segment pattern every 4th iteration (includes first iteration)
@@ -269,7 +282,7 @@ tya
 lsr
 lsr
 clc
-adci  06
+adci  .snake_segments_offset
 tax
 
 ; Load segment pattern into X
@@ -283,13 +296,13 @@ txa
 
 ; First, though, copy direction to tail position direction
 ; (Only last iteration's value is actually needed.)
-staz  .snake_data 4
-lsrz  .snake_data 4
-lsrz  .snake_data 4
-lsrz  .snake_data 4
-lsrz  .snake_data 4
-lsrz  .snake_data 4
-lsrz  .snake_data 4
+staz  .snake_data 5
+lsrz  .snake_data 5
+lsrz  .snake_data 5
+lsrz  .snake_data 5
+lsrz  .snake_data 5
+lsrz  .snake_data 5
+lsrz  .snake_data 5
 
 clc
 rol
@@ -327,28 +340,120 @@ jmpa  .draw_next_segment
 
 ; Store tail coordinates needed in main loop
 ldaz .shape_coords
-staz .snake_data 2
-ldaz .shape_coords 1
 staz .snake_data 3
+ldaz .shape_coords 1
+staz .snake_data 4
 
 ; -------------------- Main Snake Game Loop --------------------
-; Currently, just move head up a few times to test that it works correctly
 .snake_game_main_loop
 
 ; Pause between drawing and moving
 ldai  FF
 jsra  .wait
-ldai  FF
-jsra  .wait
 
 ; -------------------- Move Snake Head --------------------
-; Move head up
-; Later, this will read keyboard commands
-ldaz  .snake_data
+; Change direction if a valid key is pressed
+; Currently, we use i,k,j,l (up, down, left, and right respectively)
+
+; Check for valid key press and change head direction if found
+; Suggestion: This could be implemented as a loop through a data structure
+; mapping keys to directions, making it easier to change the key map.
+; Registers
+; A: Next head direction
+; X: Key pressed (return value from subroutine)
+jsra  .check_for_keyboard_input
+
+ldaz  .snake_data 2 ; A gets old direction by default
+
+cpxi  .i
+bne   .key_is_not_up
+ldai  .up
+jmpa  .end_map_key_to_new_head_direction
+
+.key_is_not_up
+cpxi  .k
+bne   .key_is_not_up_or_down
+ldai  .down
+jmpa  .end_map_key_to_new_head_direction
+
+.key_is_not_up_or_down
+cpxi  .j
+bne   .key_is_not_up_or_down_or_left
+ldai  .left
+jmpa  .end_map_key_to_new_head_direction
+
+.key_is_not_up_or_down_or_left
+cpxi  .l
+bne   .end_map_key_to_new_head_direction
+ldai  .right
+.end_map_key_to_new_head_direction
+staz  .snake_data 2 ; Store new direction
+
+; Move head according to direction
+; Registers
+; A: coordinate (either X or Y)
+; X: head direction from snake data structure
+ldaz  .snake_data   ; X coordinate
+ldxz  .snake_data 2 ; Head direction
+cpxi  .up
+bne   .dir_is_not_up
 sec
-sbcz  .snake_vertical_step
+sbcz  .snake_vertical_step ; up
 staz  .snake_data
+jmpa  .end_check_for_user_input
+
+.dir_is_not_up
+cpxi  .down
+bne   .dir_is_not_up_or_down
+clc
+adcz  .snake_vertical_step ; down
+staz  .snake_data
+jmpa  .end_check_for_user_input
+
+.dir_is_not_up_or_down
+ldaz  .snake_data 1 ; Y coordinate
+cpxi  .left
+bne   .dir_is_not_up_or_down_or_left
+sec
+sbcz  .snake_horizontal_step ; left
+staz  .snake_data 1
+jmpa  .end_check_for_user_input
+
+.dir_is_not_up_or_down_or_left
+cpxi  .right
+bne   .end_check_for_user_input
+clc
+adcz  .snake_horizontal_step ; right
+staz  .snake_data 1
+.end_check_for_user_input
+
 ; ------------------ End Move Snake Head ------------------
+
+; ------------------ Check for Game Over ------------------
+; For now, exit when snake head reaches a screen boundary
+
+ldaz  .snake_data
+; Top of screen
+cmpi  FF
+beq   .snake_game_over
+
+; Bottom of screen
+cmpi  BF ; 191 decimal
+beq   .snake_game_over
+
+ldaz  .snake_data 1
+; Left or right boundary
+cmpi  00
+beq   .snake_game_over
+
+bne .snake_game_not_over ; always jumps
+
+; Game over
+.snake_game_over
+jmpa  .snake_game_over
+
+.snake_game_not_over
+; ---------------- End Check for Game Over ----------------
 
 ; ------------------ Move Snake Segments ------------------
 ; Move snake by right-shifting segment bytes
@@ -357,18 +462,18 @@ staz  .snake_data
 ; Y: Outer loop counter (rotate twice since there are two bits per segment)
 
 ; Compute last byte of snake data (snake length + 3)
-ldaz  .snake_data 5
+ldaz  .snake_data 6
 clc
 adci  03
 lsr
 lsr
 clc
-adci  06 ; Six byte offset into snake data
+adci  .snake_segments_offset
 zbyte snake_data_end_byte
 staz  .snake_data_end_byte
 
 ; Initialize X and Y
-ldxi  06 ; Segment data starts at byte three
+ldxi  .snake_segments_offset
 ldyi  02
 
 ; Inner loop to rotate bytes
@@ -388,17 +493,21 @@ bne   .shift_segment_bytes_inner_loop ; always jumps
 .end_shift_segment_bytes_inner_loop
 
 ; Check if one more outer loop is needed (2 total)
-ldxi  06
+ldxi  .snake_segments_offset
 dey
 bne   .shift_segment_bytes_outer_loop
 ; End segment shifting
 
-; Set first segment direction in terms of head direction
-; For now, just set to "down" since head always moves up
-; WARNING: real implementation needs to abort if length is zero
-ldai  3F
-andz  .snake_data 6
-staz  .snake_data 6
+; Set first segment direction to opposite of head direction
+; Note: Needs to abort if length is zero
+ldaz  .snake_data 2
+eori  01 ; Set to opposite direction
+clc
+ror
+ror
+ror
+oraz  .snake_data 7
+staz  .snake_data 7
 ; ---------------- End Move Snake Segments ----------------
 
 ; -------------- Draw snake (just draw head and erase tail) --------------
@@ -412,9 +521,9 @@ jsra  .shift_shape_table
 jsra  .draw_shape
 
 ; Erase tail
-ldxz  .snake_data 2
-stxz  .shape_coords
 ldxz  .snake_data 3
+stxz  .shape_coords
+ldxz  .snake_data 4
 stxz  .shape_coords 1
 jsra  .shift_shape_table
 jsra  .erase_shape
@@ -422,45 +531,45 @@ jsra  .erase_shape
 ; Store new tail coordinates based on old tail direction.
 ; Note that new tail position is opposite of old tail direction
 ; (So decrement for "right" and increment for "left" for example.)
-ldaz  .snake_data 4
+ldaz  .snake_data 5
 lsr
 bcs   .old_tail_is_up_or_left
 lsr
 bcs   .old_tail_is_right
-ldaz  .snake_data 2
+ldaz  .snake_data 3
 sec
 sbcz  .snake_vertical_step ; down
-staz  .snake_data 2
+staz  .snake_data 3
 bcs   .end_set_new_tail ; always jumps
 .old_tail_is_right
-ldaz  .snake_data 3
+ldaz  .snake_data 4
 sbcz  .snake_horizontal_step ; right
-staz  .snake_data 3
+staz  .snake_data 4
 bcs   .end_set_new_tail ; always jumps
 .old_tail_is_up_or_left
 lsr
 bcs   .old_tail_is_left
-ldaz  .snake_data 2
+ldaz  .snake_data 3
 adcz  .snake_vertical_step ; up
-staz  .snake_data 2
+staz  .snake_data 3
 bcc   .end_set_new_tail ; always jumps
 .old_tail_is_left
-ldaz  .snake_data 3
+ldaz  .snake_data 4
 clc
 adcz  .snake_horizontal_step ; left
-staz  .snake_data 3
+staz  .snake_data 4
 .end_set_new_tail
 
 ; Store new tail direction
 
 ; Compute index of pattern (byte) containing tail
-ldaz  .snake_data 5 ; snake length
+ldaz  .snake_data 6 ; snake length
 sec
 sbci  01
 lsr
 lsr
 clc
-adci  06
+adci  .snake_segments_offset
 
 ; Load pattern to X
 tax
@@ -468,7 +577,7 @@ ldazx .snake_data
 tax
 
 ; Compute exact location of tail in this byte
-ldaz  .snake_data 5 ; snake length
+ldaz  .snake_data 6 ; snake length
 sec
 sbci  01
 andi  03
@@ -489,26 +598,15 @@ bne  .shift_tail_pattern
 
 ; Store result
 andi  03
-staz  .snake_data 4
+staz  .snake_data 5
 
 ; ------------------ End draw snake ------------------
 
-; For now, exit when snake head reaches top of screen
-; Otherwise, start another loop
-ldaz  .snake_data
-bmi   .finished_drawing_snake
-jmpa  .snake_game_main_loop
-
-; ------------------ End Main Snake Game Loop ------------------
-
-; Pause machine if/when game ends
-.finished_drawing_snake
-jmpa  .finished_drawing_snake
-; -------------------- End Snake Game --------------------
+jmpa .snake_game_main_loop
+; ------------------ End Snake Game ------------------
 
 
-; ------------------ Begin subroutines ------------------
-
+; ---------------- Begin subroutines ----------------
 org 7000
 
 ; Subroutines to handle drawing, erasing, and frame-shifting of shape tables
@@ -1069,5 +1167,22 @@ bcs   .exit_bit_swap_subroutine
 eori  C0 ; Flip bits 6 and 7
 .exit_bit_swap_subroutine
 plp
+rts
+
+; Subroutine to check for and read keyboard input
+; Similar to KEYIN except that it only checks for input once.
+; Input:  none
+; Output: X: key value or 00 if none
+.check_for_keyboard_input
+label KBD     C000
+label KBDSTRB C010
+
+ldxi  00
+bita  .KBD
+bpl   .end_check_for_keyboard_input
+ldxa  .KBD
+bita  .KBDSTRB
+
+.end_check_for_keyboard_input
 rts
 
