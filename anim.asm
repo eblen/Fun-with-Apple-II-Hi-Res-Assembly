@@ -429,8 +429,7 @@ staz  .snake_data 1
 
 ; ------------------ End Move Snake Head ------------------
 
-; ------------------ Check for Game Over ------------------
-; For now, exit when snake head reaches a screen boundary
+; ------------ Check if screen bounds reached ------------
 
 ldaz  .snake_data
 ; Top of screen
@@ -445,15 +444,17 @@ ldaz  .snake_data 1
 ; Left or right boundary
 cmpi  00
 beq   .snake_game_over
+bne   .snake_game_continues
+; ---------- End Check if screen bounds reached ----------
 
-bne .snake_game_not_over ; always jumps
-
-; Game over
+; -------------------- Game over --------------------
+; For now, just pause
+; Place code here, instead of outside the main loop, so that relative branching
+; can be used.
 .snake_game_over
 jmpa  .snake_game_over
-
-.snake_game_not_over
-; ---------------- End Check for Game Over ----------------
+; ------------------ End Game over ------------------
+.snake_game_continues
 
 ; ------------------ Move Snake Segments ------------------
 ; Move snake by right-shifting segment bytes
@@ -518,6 +519,9 @@ stxz  .shape_coords
 ldxz  .snake_data 1
 stxz  .shape_coords 1
 jsra  .shift_shape_table
+jsra  .detect_collision
+cmpi  00
+bne   .snake_game_over
 jsra  .draw_shape
 
 ; Erase tail
@@ -603,6 +607,7 @@ staz  .snake_data 5
 ; ------------------ End draw snake ------------------
 
 jmpa .snake_game_main_loop
+
 ; ------------------ End Snake Game ------------------
 
 
@@ -611,36 +616,49 @@ org 7000
 
 ; Subroutines to handle drawing, erasing, and frame-shifting of shape tables
 
-; Subroutine to draw a shape described by a shape table with two entry points:
-; ".draw_shape" or ".erase_shape"
-; Both of these are "careful" in that only pixels set in the shape table are
-; affected. So draw does no erasing and erase does no drawing nor does it erase
+; Subroutine to draw, erase, or detect collision of a shape described by a
+; shape table with three entry points:
+; ".draw_shape" or ".erase_shape" or ".detect_collision"
+; Both draw and erase are "careful" in that only pixels set in the shape table
+; are affected. Draw does no erasing and erase does no drawing nor does it erase
 ; pixels not set in the shape table. This improves on "eor" drawing and erasing,
 ; which can destroy other shapes and requires alternating drawing and erasing.
-; Input: Zero-page shape table address (not table itself) in "shape_table_addr"
-;        Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
-;        (pixel coordinates for horizontal, which are converted to byte
-;         coordinates internally as needed)
-; All registers and zbytes are restored.
+
+; Currently, collision detection just indicates any collision of the shape with
+; another object (a pixel that is set both in the shape table and already in the
+; screen buffer). Later, more information about the collision will be returned.
+
+; Input:  Zero-page shape table address (not table itself) in "shape_table_addr"
+;         Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
+;         (pixel coordinates for horizontal, which are converted to byte
+;          coordinates internally as needed)
+; Output: none except for collision detection
+;         A: whether collision occurred (0: no, non-zero: yes)
+; All registers and zbytes are restored except A when doing collision detection.
 zbyte shape_table_addr 2
 zbyte shape_coords     2
-zbyte draw_or_erase ; boolean value: Draw or erase shape?
-                    ; 0: draw, 1: erase
+zbyte draw_or_erase_or_dc ; Draw or erase shape or detect collision?
+                          ; 0: draw, $40: erase, $C0: detect collision
+                          ; Bits 6 and 7 are readable by the "bit" op
 
 ; Subroutine start
-
 ; Set whether to draw or erase based on subroutine entry point
 .draw_shape
 pha
 ldai  00
-staz  .draw_or_erase
-beq   .skip_set_erase
+staz  .draw_or_erase_or_dc
+beq   .finish_setting_shape_subroutine_op
 
 .erase_shape
 pha
-ldai  40 ; Bit 6 allows us to use "bit" and the overflow flag later
-staz  .draw_or_erase
-.skip_set_erase
+ldai  40
+staz  .draw_or_erase_or_dc
+bne   .finish_setting_shape_subroutine_op
+
+.detect_collision
+ldai  C0
+staz  .draw_or_erase_or_dc
+.finish_setting_shape_subroutine_op
 
 ; Save registers and zero bytes
 txa
@@ -691,17 +709,17 @@ staz  .shape_coords 1
 ; Finally, set Y
 ldyz  .y_start
 
-; Now we can start drawing
+; Now we can start drawing, erasing, or detecting a collision
 .draw_shape_loop_start
 jsra  .line_index_to_address
 
-; Write to screen
+; Do actual drawing, erasing, or detecting
 .draw_shape_table_load_instr
 ldaa  0000
-bitz  .draw_or_erase
+bitz  .draw_or_erase_or_dc
 
 ; Use overflow flag, which is unchanged by logical operations
-bvs   .erase_shape_table_bytes
+bvs   .erase_shape_table_bytes_or_dc
 
 ; Careful draw: Do no erasing of other pixels
 orany .line_address
@@ -710,13 +728,49 @@ bvc   .store_new_screen_byte ; always jumps
 ; Careful erase: Only erase pixels set in the shape table
 ; Formula is (not B) & A where B is the shape table pattern
 ; and A is the existing pattern.
-.erase_shape_table_bytes
+.erase_shape_table_bytes_or_dc
+
+bitz  .draw_or_erase_or_dc
+bmi   .detect_shape_table_collision
 eori  FF
 andny .line_address
 
 .store_new_screen_byte
 stany .line_address
+jmpa  .skip_shape_table_collision_detection ; always jumps
+                                            ; no suitable flag for relative jump!
 
+.detect_shape_table_collision
+; Running out of registers! Need another storage byte.
+zbyte shape_subroutine_tmp_byte
+staz  .shape_subroutine_tmp_byte
+
+; Save X and Y to stack
+txa
+pha
+tya
+pha
+
+; Set X and Y for subroutine call
+ldxz  .shape_subroutine_tmp_byte ; shape table byte
+ldany .line_address ; screen byte
+tay
+
+; Call subroutine and save return value in tmp byte
+jsra  .check_for_byte_collision
+staz  .shape_subroutine_tmp_byte
+
+; Restore X and Y
+pla
+tay
+pla
+tax
+
+; Now handle collision
+ldaz  .shape_subroutine_tmp_byte
+bne   .end_shape_table_subroutine
+
+.skip_shape_table_collision_detection
 ; Increment above load address for next loop
 inca  .draw_shape_table_load_instr 1
 ldaa  .draw_shape_table_load_instr 1
@@ -735,13 +789,32 @@ inx
 cpxz  .shape_coords
 bne   .draw_shape_loop_start
 
+; Set no collision in case this is collision detection
+ldai  00
+
+.end_shape_table_subroutine
 ; Restore registers and zero bytes and return
+tax ; In case we need to return A
 pla
 staz  .shape_coords
 pla
 staz  .shape_coords 1
 pla
 tay
+
+; For collision detection, return A rather than restoring it
+bitz .draw_or_erase_or_dc
+bpl  .no_return_value_from_shape_subroutine
+
+pla ; saved X value
+; Swap A and X and return
+staz .shape_subroutine_tmp_byte
+txa
+ldxz .shape_subroutine_tmp_byte
+rts
+
+; For other cases, restore registers normally
+.no_return_value_from_shape_subroutine
 pla
 tax
 pla
@@ -1184,5 +1257,49 @@ ldxa  .KBD
 bita  .KBDSTRB
 
 .end_check_for_keyboard_input
+rts
+
+; Subroutine to check for collision of a shape table
+; Input: Zero-page shape table address (not table itself) in "shape_table_addr"
+;        Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
+;        (pixel coordinates for horizontal, which are converted to byte
+;         coordinates internally as needed)
+.check_for_shape_table_collision
+
+
+; Subroutine to detect collision between two color bytes
+; Input: X: first byte
+;        Y: second byte
+; Output: A: whether there was a collision (0: no, non-zero: yes)
+; This subroutine assumes only a single color per byte.
+; Strategy is to zero the color bit (bit 7), rendering it irrelevant,
+; and then shift bytes that are on odd columns so that any combination of
+; odd and even columns can be compared.
+.check_for_byte_collision
+zbyte color_bytes_modified 2
+
+; Modify byte 1
+txa
+andi  7F ; zero color bit
+stxz  .color_bytes_modified
+andi  55 ; 01010101 (test if an even column is set)
+bne   .color_byte_1_is_on_even_columns
+clc
+rolz  .color_bytes_modified
+.color_byte_1_is_on_even_columns
+
+; Modify byte 2
+tya
+andi  7F ; zero color bit
+styz  .color_bytes_modified 1
+andi  55 ; 01010101 (test if an even column is set)
+bne   .color_byte_2_is_on_even_columns
+clc
+rolz  .color_bytes_modified 1
+.color_byte_2_is_on_even_columns
+
+; Compare them
+ldaz  .color_bytes_modified
+andz  .color_bytes_modified 1
 rts
 
