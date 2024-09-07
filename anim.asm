@@ -11,9 +11,18 @@ data 000603081C003E2A005D08001C5D00141400222200
 
 org 6020
 
+; Segment of snake for snake game
 .snake_segment
 data 0004022800280028002800
 label bits_per_snake_segment 04
+
+org 6040
+
+; Apple for snake game
+; Currently just a square, like the snake segment, except orange.
+; (Only difference is setting the high bit of each shape byte.)
+.apple
+data 000402A880A880A880A880
 
 org 6100
 
@@ -188,10 +197,13 @@ label l EC
 zbyte snake_data 32 ; zbyte lengths are in decimal. SASM is inconsistent in
                     ; this case, since all other values are hexadecimal.
 label snake_segments_offset 07
+label rng_seed 4E
 
-; Initialize graphics and data tables
+; Initialize graphics, data tables, and random generator
 jsra  .init_hires_graphics
 jsra  .create_div7_table
+ldaz  .rng_seed
+jsra  .init_lc_rng
 
 ; Draw a sample snake to start
 ldai  20 ; X coordinate
@@ -343,6 +355,59 @@ ldaz .shape_coords
 staz .snake_data 3
 ldaz .shape_coords 1
 staz .snake_data 4
+
+; -------------------- Place Apples --------------------
+; Registers
+; X: Input to .shift_shape_table
+; Y: loop counter
+label num_apples 14
+
+; Set shape table address
+ldai  40
+staz  .shape_table_addr
+ldai  60
+staz  .shape_table_addr 1
+
+; Main loop for placing apples
+; Warning: Apple rows and columns are multiples of 4 to align with snake.
+; Hardcoding this value greatly simplifies the code but means that we can no
+; longer change the snake size without also changing this loop.
+ldyi  .num_apples
+.apple_placing_loop
+
+; Select random horizontal position
+; Keep trying until we find something in range
+.get_random_number_in_range_for_apple
+jsra  .use_lc_rng
+cmpi  C0 ; 192 (number of horizontal lines)
+bcs   .get_random_number_in_range_for_apple
+andi  FC ; Make line a multiple of 4
+staz  .shape_coords
+
+; Select random vertical position
+jsra  .use_lc_rng
+andi  FC ; Make line a multiple of 4
+staz  .shape_coords 1
+
+; Draw apple
+tax
+tya
+pha
+jsra  .shift_shape_table
+pla
+tay
+jsra  .draw_shape
+
+dey
+bne   .apple_placing_loop
+; End main loop for placing apples
+
+; Restore previous shape table values
+ldai  20
+staz  .shape_table_addr
+ldai  60
+staz  .shape_table_addr 1
+; ------------------ End Place Apples -----------------
 
 ; -------------------- Main Snake Game Loop --------------------
 .snake_game_main_loop
@@ -1301,5 +1366,35 @@ rolz  .color_bytes_modified 1
 ; Compare them
 ldaz  .color_bytes_modified
 andz  .color_bytes_modified 1
+rts
+
+; Subroutine for a linear congruential random number generator
+; Formula is x = (5x+13) mod 256
+; Two entry points:
+; .init_lc_rng
+;     Input:  A: seed for generator
+;     Output: none
+; .use_lc_rng
+;     Input:  none
+;     Output: A: pseudo-random number
+; Only A is altered and only for .use_lc_rng
+zbyte lc_rng_bit_hash ; State of RNG. Should not be accessed outside of subroutine
+.init_lc_rng
+staz  .lc_rng_bit_hash
+rts
+
+.use_lc_rng
+ldaz  .lc_rng_bit_hash
+clc
+adcz  .lc_rng_bit_hash
+clc
+adcz  .lc_rng_bit_hash
+clc
+adcz  .lc_rng_bit_hash
+clc
+adcz  .lc_rng_bit_hash
+clc
+adci  0D
+staz  .lc_rng_bit_hash
 rts
 
