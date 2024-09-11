@@ -1324,14 +1324,6 @@ bita  .KBDSTRB
 .end_check_for_keyboard_input
 rts
 
-; Subroutine to check for collision of a shape table
-; Input: Zero-page shape table address (not table itself) in "shape_table_addr"
-;        Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
-;        (pixel coordinates for horizontal, which are converted to byte
-;         coordinates internally as needed)
-.check_for_shape_table_collision
-
-
 ; Subroutine to detect collision between two color bytes
 ; Input: X: first byte
 ;        Y: second byte
