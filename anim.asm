@@ -585,8 +585,9 @@ ldxz  .snake_data 1
 stxz  .shape_coords 1
 jsra  .shift_shape_table
 jsra  .detect_collision
-cmpi  00
-bne   .snake_game_over
+andi  07
+cmpi  .green ; Snake ran into itself
+beq   .snake_game_over
 jsra  .draw_shape
 
 ; Erase tail
@@ -698,7 +699,11 @@ org 7000
 ;         (pixel coordinates for horizontal, which are converted to byte
 ;          coordinates internally as needed)
 ; Output: none except for collision detection
-;         A: whether collision occurred (0: no, non-zero: yes)
+;         A: See "check_for_byte_collision" header. On collision:
+;            bits 0-2 are the color of the screen byte
+;            bits 3-5 are the color of the shape table byte
+;         Normally, only bits 0-2 are of interest, since user usually knows the
+;         color of the shape being drawn.
 ; All registers and zbytes are restored except A when doing collision detection.
 zbyte shape_table_addr 2
 zbyte shape_coords     2
@@ -831,8 +836,8 @@ tay
 pla
 tax
 
-; Now handle collision
-ldaz  .shape_subroutine_tmp_byte
+; Bail if collision occurred or go to next iteration
+ldaz  .shape_subroutine_tmp_byte ; return value
 bne   .end_shape_table_subroutine
 
 .skip_shape_table_collision_detection
@@ -1325,9 +1330,15 @@ bita  .KBDSTRB
 rts
 
 ; Subroutine to detect collision between two color bytes
-; Input: X: first byte
-;        Y: second byte
-; Output: A: whether there was a collision (0: no, non-zero: yes)
+; Input:  X: first byte
+;         Y: second byte
+; Output: A: A=0 for no collision
+;            for collision:
+;            bit 7:   1
+;            bit 6:   1
+;            bit 3-5: color of byte in shape table (if collision occurred)
+;            bit 0-2: color of other byte (if collision occurred)
+;
 ; This subroutine assumes only a single color per byte.
 ; Strategy is to zero the color bit (bit 7), rendering it irrelevant,
 ; and then shift bytes that are on odd columns so that any combination of
@@ -1358,6 +1369,86 @@ rolz  .color_bytes_modified 1
 ; Compare them
 ldaz  .color_bytes_modified
 andz  .color_bytes_modified 1
+beq   .no_collision_between_bytes
+
+; Get byte colors and store them in return value. Set bits 6 and 7.
+; Reuse "color_bytes_modified" zbytes for temporarily storing colors
+
+; Get first byte's color
+txa
+jsra  .get_even_screen_byte_color
+staz  .color_bytes_modified
+
+; Get second byte's color
+tya
+jsra  .get_even_screen_byte_color
+staz  .color_bytes_modified 1
+
+; Construct return value
+ldaz  .color_bytes_modified
+asl
+asl
+asl
+oraz  .color_bytes_modified 1
+orai  C0
+
+.no_collision_between_bytes
+rts
+
+; Subroutine to return the color of an EVEN screen byte
+; Input:  A: byte
+; Output: A: color. Black and white both have two possible return values.
+;                   (6 possible colors in all)
+; Register Y is not used, but register X is altered.
+;
+; Assumes byte is on an EVEN column. If not, swap violet and green and also
+; blue and orange. Currently, this assumption holds for all applications,
+; because all colored shapes are drawn in even columns.
+; Assumes a byte is a single color. Specifically, if bits are set for both odd
+; and even columns, we assume the color is white, since that is the only
+; possible single-color value.
+.get_even_screen_byte_color
+
+; Possible return values
+; Specific bits:
+; 0: same as input bit 7
+; 1: whether an even column is set
+; 2: whether an odd column is set
+label black1  00
+label black2  01
+label violet  02
+label blue    03
+label green   04
+label orange  05
+label white1  06
+label white2  07
+
+; zbyte for "bit" instructions
+zbyte get_even_screen_byte_color_tmp
+
+; A is both input and output
+
+; Set bit 7 as bit 0
+asl
+adci  00
+
+; Check if any even columns are set. If so, set bit 1.
+ldxi  AA
+stxz  .get_even_screen_byte_color_tmp
+bitz  .get_even_screen_byte_color_tmp
+beq   .no_even_columns_set
+orai  02
+.no_even_columns_set
+
+; Check if any odd columns are set. If so, set bit 2.
+ldxi  54 ; Be careful. Do not check bit 0.
+stxz  .get_even_screen_byte_color_tmp
+bitz  .get_even_screen_byte_color_tmp
+beq   .no_odd_columns_set
+orai  04
+.no_odd_columns_set
+
+andi  07
 rts
 
 ; Subroutine for a linear congruential random number generator
