@@ -710,6 +710,8 @@ zbyte shape_coords     2
 zbyte draw_or_erase_or_dc ; Draw or erase shape or detect collision?
                           ; 0: draw, $40: erase, $C0: detect collision
                           ; Bits 6 and 7 are readable by the "bit" op
+; tmp byte, used for various purposes when registers are full
+zbyte shape_subroutine_tmp_byte
 
 ; Subroutine start
 ; Set whether to draw or erase based on subroutine entry point
@@ -783,6 +785,13 @@ ldyz  .y_start
 .draw_shape_loop_start
 jsra  .line_index_to_address
 
+; Store screen byte to tmp, with bit 7 zeroed, for drawing only.
+; This ensures that bit 7 of the new screen byte will be set to the shape table
+; value, and thus the color will be that of the shape table byte.
+ldany .line_address
+andi  7F
+staz  .shape_subroutine_tmp_byte
+
 ; Do actual drawing, erasing, or detecting
 .draw_shape_table_load_instr
 ldaa  0000
@@ -792,7 +801,7 @@ bitz  .draw_or_erase_or_dc
 bvs   .erase_shape_table_bytes_or_dc
 
 ; Careful draw: Do no erasing of other pixels
-orany .line_address
+oraz  .shape_subroutine_tmp_byte
 bvc   .store_new_screen_byte ; always jumps
 
 ; Careful erase: Only erase pixels set in the shape table
@@ -811,8 +820,6 @@ jmpa  .skip_shape_table_collision_detection ; always jumps
                                             ; no suitable flag for relative jump!
 
 .detect_shape_table_collision
-; Running out of registers! Need another storage byte.
-zbyte shape_subroutine_tmp_byte
 staz  .shape_subroutine_tmp_byte
 
 ; Save X and Y to stack
