@@ -527,14 +527,14 @@ jmpa  .snake_game_over
 ; X: Snake data byte number
 ; Y: Outer loop counter (rotate twice since there are two bits per segment)
 
-; Compute last byte of snake data (snake length + 3)
+; Compute last byte of snake data
 ldaz  .snake_data 6
 clc
-adci  03
 lsr
 lsr
 clc
 adci  .snake_segments_offset
+adci  01
 zbyte snake_data_end_byte
 staz  .snake_data_end_byte
 
