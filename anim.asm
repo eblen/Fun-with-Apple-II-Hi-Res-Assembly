@@ -577,6 +577,7 @@ staz  .snake_data 7
 ; ---------------- End Move Snake Segments ----------------
 
 ; -------------- Draw snake (just draw head and erase tail) --------------
+label green 04
 
 ; Draw head
 ldxz  .snake_data
@@ -699,9 +700,10 @@ org 7000
 ;         (pixel coordinates for horizontal, which are converted to byte
 ;          coordinates internally as needed)
 ; Output: none except for collision detection
-;         A: See "check_for_byte_collision" header. On collision:
-;            bits 0-2 are the color of the screen byte
-;            bits 3-5 are the color of the shape table byte
+;         A: See "check_for_byte_collision" header for details. Return value is
+;            the same. Notice that:
+;            bits 0-2 are the color data of the screen byte
+;            bits 3-5 are the color data of the shape table byte
 ;         Normally, only bits 0-2 are of interest, since user usually knows the
 ;         color of the shape being drawn.
 ; All registers and zbytes are restored except A when doing collision detection.
@@ -1343,13 +1345,16 @@ rts
 ;            for collision:
 ;            bit 7:   1
 ;            bit 6:   1
-;            bit 3-5: color of byte in shape table (if collision occurred)
-;            bit 0-2: color of other byte (if collision occurred)
+;            bit 3-5: color data of byte in shape table (if collision occurred)
+;            bit 0-2: color data of other byte (if collision occurred)
+;            (see "get_byte_color_data" for details of color data)
 ;
-; This subroutine assumes only a single color per byte.
-; Strategy is to zero the color bit (bit 7), rendering it irrelevant,
-; and then shift bytes that are on odd columns so that any combination of
-; odd and even columns can be compared.
+; This subroutine assumes only a single color per byte, so either all bits 0-6
+; are the same or only set for even or odd columns.
+;
+; Strategy is to zero the color bit (bit 7), rendering it irrelevant, and then
+; shift input bytes that are on odd columns so that any combination of odd and
+; even column bytes can be compared.
 .check_for_byte_collision
 zbyte color_bytes_modified 2
 
@@ -1383,12 +1388,12 @@ beq   .no_collision_between_bytes
 
 ; Get first byte's color
 txa
-jsra  .get_even_screen_byte_color
+jsra  .get_byte_color_data
 staz  .color_bytes_modified
 
 ; Get second byte's color
 tya
-jsra  .get_even_screen_byte_color
+jsra  .get_byte_color_data
 staz  .color_bytes_modified 1
 
 ; Construct return value
@@ -1402,36 +1407,25 @@ orai  C0
 .no_collision_between_bytes
 rts
 
-; Subroutine to return the color of an EVEN screen byte
+; Subroutine to return color data for a byte
 ; Input:  A: byte
-; Output: A: color. Black and white both have two possible return values.
-;                   (6 possible colors in all)
+; Output: A: color data:
+;            bit 0: same as input bit 7
+;            bit 1: whether an even column is set
+;            bit 2: whether an odd column is set
+;            bits 3-7: 0
 ; Register Y is not used, but register X is altered.
 ;
-; Assumes byte is on an EVEN column. If not, swap violet and green and also
-; blue and orange. Currently, this assumption holds for all applications,
-; because all colored shapes are drawn in even columns.
-; Assumes a byte is a single color. Specifically, if bits are set for both odd
-; and even columns, we assume the color is white, since that is the only
-; possible single-color value.
-.get_even_screen_byte_color
-
-; Possible return values
-; Specific bits:
-; 0: same as input bit 7
-; 1: whether an even column is set
-; 2: whether an odd column is set
-label black1  00
-label black2  01
-label violet  02
-label blue    03
-label green   04
-label orange  05
-label white1  06
-label white2  07
+; Subroutine does not return exact color, since that depends on the column
+; where the byte is placed (even or odd). Also, bytes can be multiple colors
+; if both even and odd columns are set (including black and white). However,
+; this data, along with column data, is sufficient if one assumes bytes have
+; only a single color. (Under that assumption, bytes are black or white if
+; bit 1 and bit 2 are equal.)
+.get_byte_color_data
 
 ; zbyte for "bit" instructions
-zbyte get_even_screen_byte_color_tmp
+zbyte get_byte_color_data_tmp
 
 ; A is both input and output
 
@@ -1441,16 +1435,16 @@ adci  00
 
 ; Check if any even columns are set. If so, set bit 1.
 ldxi  AA
-stxz  .get_even_screen_byte_color_tmp
-bitz  .get_even_screen_byte_color_tmp
+stxz  .get_byte_color_data_tmp
+bitz  .get_byte_color_data_tmp
 beq   .no_even_columns_set
 orai  02
 .no_even_columns_set
 
 ; Check if any odd columns are set. If so, set bit 2.
 ldxi  54 ; Be careful. Do not check bit 0.
-stxz  .get_even_screen_byte_color_tmp
-bitz  .get_even_screen_byte_color_tmp
+stxz  .get_byte_color_data_tmp
+bitz  .get_byte_color_data_tmp
 beq   .no_odd_columns_set
 orai  04
 .no_odd_columns_set
