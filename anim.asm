@@ -577,18 +577,54 @@ staz  .snake_data 7
 ; ---------------- End Move Snake Segments ----------------
 
 ; -------------- Draw snake (just draw head and erase tail) --------------
-label green 04
+; Colors to test for when collision occurs
+label green_even  04
+label green_odd   02
+label orange_even 05
+label orange_odd  03
 
-; Draw head
+; Handle collisions and draw head
 ldxz  .snake_data
 stxz  .shape_coords
 ldxz  .snake_data 1
 stxz  .shape_coords 1
 jsra  .shift_shape_table
+
 jsra  .detect_collision
+
+; Set carry to whether column number is odd
+tax
+asl
+asl
+txa
+
+; Set A to color data of the screen byte
 andi  07
-cmpi  .green ; Snake ran into itself
+
+; Odd and even columns must be handled differently
+bcs   .handle_collision_on_odd_column
+
+; Handle collision on even column
+cmpi  .green_even ; Snake ran into itself
 beq   .snake_game_over
+cmpi  .orange_even ; Snake ate an apple
+bne   .do_not_extend_snake
+beq   .extend_snake ; always jumps
+
+; Handle collision on odd column
+.handle_collision_on_odd_column
+cmpi  .green_odd ; Snake ran into itself
+beq   .snake_game_over
+cmpi  .orange_odd ; Snake ate an apple
+bne   .do_not_extend_snake
+
+.extend_snake
+jsra  .draw_shape
+; Extend snake size and keep tail. So we skip all the tail computations.
+incz  .snake_data 6
+bne   .skip_tail_ops ; always jumps
+
+.do_not_extend_snake
 jsra  .draw_shape
 
 ; Erase tail
@@ -670,6 +706,7 @@ bne  .shift_tail_pattern
 ; Store result
 andi  03
 staz  .snake_data 5
+.skip_tail_ops
 
 ; ------------------ End draw snake ------------------
 
@@ -700,11 +737,14 @@ org 7000
 ;         (pixel coordinates for horizontal, which are converted to byte
 ;          coordinates internally as needed)
 ; Output: none except for collision detection
-;         A: See "check_for_byte_collision" header for details. Return value is
-;            the same. Notice that:
+;         A: A=0 on no collision.
+;            See "check_for_byte_collision" header for details. Return value is
+;            the same except for bit 6, which indicates whether column of
+;            collision is odd. This bit is needed to figure out exact color
+;            values. Notice that:
 ;            bits 0-2 are the color data of the screen byte
 ;            bits 3-5 are the color data of the shape table byte
-;         Normally, only bits 0-2 are of interest, since user usually knows the
+;         Normally, bits 3-5 are not of interest, since user usually knows the
 ;         color of the shape being drawn.
 ; All registers and zbytes are restored except A when doing collision detection.
 zbyte shape_table_addr 2
@@ -845,9 +885,20 @@ tay
 pla
 tax
 
-; Bail if collision occurred or go to next iteration
-ldaz  .shape_subroutine_tmp_byte ; return value
-bne   .end_shape_table_subroutine
+; If collision occurred, construct return value in A and bail
+ldaz  .shape_subroutine_tmp_byte
+beq   .skip_shape_table_collision_detection
+
+; Set bit 6 to whether address of collision is odd and all other bits to 0
+tya
+andi  01
+ror
+ror
+ror
+
+; Then merge in return value from "check_for_byte_collision"
+oraz  .shape_subroutine_tmp_byte
+bne   .end_shape_table_subroutine ; always jumps
 
 .skip_shape_table_collision_detection
 ; Increment above load address for next loop
@@ -1344,7 +1395,7 @@ rts
 ; Output: A: A=0 for no collision
 ;            for collision:
 ;            bit 7:   1
-;            bit 6:   1
+;            bit 6:   0
 ;            bit 3-5: color data of byte in shape table (if collision occurred)
 ;            bit 0-2: color data of other byte (if collision occurred)
 ;            (see "get_byte_color_data" for details of color data)
@@ -1402,7 +1453,7 @@ asl
 asl
 asl
 oraz  .color_bytes_modified 1
-orai  C0
+orai  80
 
 .no_collision_between_bytes
 rts
