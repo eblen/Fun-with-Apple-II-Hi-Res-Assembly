@@ -1286,28 +1286,39 @@ label graphics  C050
 label hires     C057
 label page1     C054
 label mixoff    C052
+label hr_addr_low  FE
+label hr_addr_high FF
 
+; Settings
 ldaa   .graphics
 ldaa   .hires
 ldaa   .page1
 ldaa   .mixoff
 
-; Now blank all pixels
+; Place hi-res page 1 address in zero page bytes
+ldai  00
+staz  .hr_addr_low
+ldai  20
+staz  .hr_addr_high
+
+; Blank all pixels outer loop
 .clr1
 ldai  00
 ldyi  00
 
-; Do actual blanking of byte
+; Blank all pixels inner loop
 .clr
-stany 26
+stany .hr_addr_low
 iny
 bne   .clr
 ; End inner loop
 
-incz  27
-ldaz  27
+incz  .hr_addr_high
+ldaz  .hr_addr_high
 cmpi  40
 bcc   .clr1
+; End outer loop
+
 rts
 ; -------------------- End subroutine --------------------
 
