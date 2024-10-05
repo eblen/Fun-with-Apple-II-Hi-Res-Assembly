@@ -273,6 +273,8 @@ tya
 pha
 ldxz  .shape_coords 1
 jsra  .shift_shape_table
+ldai  01
+staz  .change_bit7
 jsra  .draw_shape
 pla
 tay
@@ -396,6 +398,8 @@ pha
 jsra  .shift_shape_table
 pla
 tay
+ldai  01
+staz  .change_bit7
 jsra  .draw_shape
 
 dey
@@ -619,12 +623,16 @@ cmpi  .orange_odd ; Snake ate an apple
 bne   .do_not_extend_snake
 
 .extend_snake
+ldai  01
+staz  .change_bit7
 jsra  .draw_shape
 ; Extend snake size and keep tail. So we skip all the tail computations.
 incz  .snake_data 6
 bne   .skip_tail_ops ; always jumps
 
 .do_not_extend_snake
+ldai  00
+staz  .change_bit7
 jsra  .draw_shape
 
 ; Erase tail
@@ -633,6 +641,8 @@ stxz  .shape_coords
 ldxz  .snake_data 4
 stxz  .shape_coords 1
 jsra  .shift_shape_table
+ldai  00
+staz  .change_bit7
 jsra  .erase_shape
 
 ; Store new tail coordinates based on old tail direction.
@@ -736,6 +746,7 @@ org 7000
 ;         Zero-page shape coordinates in "shape_coords" ([0, 191] and [0-255])
 ;         (pixel coordinates for horizontal, which are converted to byte
 ;          coordinates internally as needed)
+;         Whether to change bit 7 in "change_bit7" (see comments below)
 ; Output: none except for collision detection
 ;         A: A=0 on no collision.
 ;            See "check_for_byte_collision" header for details. Return value is
@@ -749,6 +760,9 @@ org 7000
 ; All registers and zbytes are restored except A when doing collision detection.
 zbyte shape_table_addr 2
 zbyte shape_coords     2
+zbyte change_bit7 ; Used for both draw and erase
+                  ; 0: Keep original bit 7 value for drawn/erased bytes
+                  ; 1: Set bit 7 to that in shape table or to 0 for erase
 zbyte draw_or_erase_or_dc ; Draw or erase shape or detect collision?
                           ; 0: draw, $40: erase, $C0: detect collision
                           ; Bits 6 and 7 are readable by the "bit" op
@@ -827,11 +841,13 @@ ldyz  .y_start
 .draw_shape_loop_start
 jsra  .line_index_to_address
 
-; Store screen byte to tmp, with bit 7 zeroed, for drawing only.
-; This ensures that bit 7 of the new screen byte will be set to the shape table
-; value, and thus the color will be that of the shape table byte.
-ldany .line_address
-andi  7F
+; Store screen byte to tmp, optionally zeroing bit 7, used only for drawing
+ldai  FF
+bitz  .change_bit7
+beq   .preserve_bit7_when_drawing_shape
+ldai  7F
+.preserve_bit7_when_drawing_shape
+andny .line_address
 staz  .shape_subroutine_tmp_byte
 
 ; Do actual drawing, erasing, or detecting
@@ -853,7 +869,11 @@ bvc   .store_new_screen_byte ; always jumps
 
 bitz  .draw_or_erase_or_dc
 bmi   .detect_shape_table_collision
-eori  FF
+eori  7F
+rorz  .change_bit7
+bcc   .preserve_bit7_when_erasing_shape
+andi  7F
+.preserve_bit7_when_erasing_shape
 andny .line_address
 
 .store_new_screen_byte
